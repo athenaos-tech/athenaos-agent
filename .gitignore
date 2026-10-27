@@ -1,0 +1,132 @@
+# ==============================================================================
+# Noraz AI — Comprehensive .gitignore
+# ==============================================================================
+
+# 1. Dependencies & Package Managers
+node_modules/
+.pnp
+.pnp.js
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# 2. Build & Compilation Artifacts
+/dist/
+build/
+out/
+*.tsbuildinfo
+.turbo/
+.parcel-cache/
+.swc/
+
+# 3. Environment Variables & Private Secrets (CRITICAL: NEVER COMMIT SECRETS)
+.env
+.env.*
+.env*.local
+.env.bak*
+.env.backup*
+*.env
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.secret*
+*.token
+*.seed
+*.mnemonic
+id_rsa*
+id_ed25519*
+.gmgn_rsa_private.pem
+keys/
+secrets/
+wallets/
+private/
+credentials/
+
+# 4. Database & State Persistence (Local runtime data)
+database/*
+!database/.gitkeep
+*.db
+*.sqlite
+*.sqlite3
+prisma/dev.db
+nft-scanner-test.json
+
+# 5. Dynamic Strategy & Indicator Engine Runtime State
+strategies/.active.json
+strategies/*-custom.mjs
+strategies/custom-strategy-prompt.txt
+strategies/.backup/
+indicators/.backup/
+
+# 6. Logs, PM2 & Diagnostics
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+pino.log
+athena.log
+noraz.log
+opencatz.log
+opencat.log
+.pm2/
+
+# 7. Testing, Coverage & Benchmarks
+coverage/
+*.lcov
+.nyc_output/
+vitest.config.ts.timestamp*
+.vitest/
+
+# 8. Operating System & IDE Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.vscode/
+.idea/
+.gemini/
+.claude/
+.cursor/
+*.suo
+*.ntvs*
+*.njsproj
+*.user
+*.sublime-workspace
+*.sublime-project
+
+# 9. Internal AI & Agent Scratchpads
+.brain/
+.superpowers/
+docs/superpowers/
+STATE.md
+LOOP.md
+loop-budget.md
+loop-run-log.md
+loop-constraints.md
+docs/safety.md
+patterns/
+skills/loop-verifier/
+skills/loop-budget/
+
+# 10. Temporary Files, Python Cache & Local Drafts
+articles/
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+~$*.doc*
+~$*.xls*
+~$*.ppt*
+__pycache__/
+*.pyc
+*.pyo

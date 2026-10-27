@@ -1,0 +1,56 @@
+{
+  "schema": "athena.strategy/v1",
+  "domains": {
+    "meme-robinhood": {
+      "params": {
+        "passThreshold": 80,
+        "minVolume24hUsd": 25000,
+        "minLiquidityUsd": 5000,
+        "minAgeHours": 0,
+        "maxRugRatio": 0.4,
+        "maxRatTraderRate": 0.4,
+        "maxTop10HolderRate": 0.5,
+        "minVisitingCount": 100,
+        "maxTwitterRenameCount": 3,
+        "maxTwitterDelPostCount": 5,
+        "maxTwitterCreateTokenCount": 10,
+        "minTotalFeeUsd": 250,
+        "prefilterVolume1hUsd": 25000,
+        "prefilterLiquidityUsd": 5000,
+        "prefilterTotalFeeUsd": 250,
+        "prefilterRugRatio": 0.4,
+        "prefilterRatTraderRate": 0.4,
+        "prefilterTop10HolderRate": 0.5
+      }
+    },
+    "lp-robinhood": {
+      "params": {
+        "passThreshold": 80,
+        "minTvlUsd": 10000,
+        "minVol24hUsd": 100000,
+        "minFeeTvlRatio24h": 0.02,
+        "minMarketCapUsd": 100000
+      }
+    },
+    "nft": {
+      "params": {
+        "passThreshold": 80,
+        "minFloorEth": 0.01,
+        "minSurgePct": 10,
+        "minVolSpike": 1.5,
+        "minVelocity1h": 3,
+        "prefilterSurgePct": 10,
+        "prefilterVolSpike": 1.5,
+        "prefilterVelocity1h": 3
+      }
+    },
+    "whale-eth": {
+      "params": {
+        "passThreshold": 80,
+        "minPerpsUsd": 500000,
+        "minSpotUsd": 50000,
+        "minWhaleCount": 1
+      }
+    }
+  }
+}

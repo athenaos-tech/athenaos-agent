@@ -1,0 +1,67 @@
+{
+  "name": "athenaos-agent",
+  "version": "2.0.0",
+  "description": "AthenaOS — autonomous multi-agent desk for BNB Smart Chain (PancakeSwap V3, four.meme).",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "athena": "./bin/athena.js"
+  },
+  "scripts": {
+    "athena": "node ./bin/athena.js",
+    "onboard": "node scripts/wizard.js",
+    "wizard": "node scripts/wizard.js",
+    "config": "node scripts/wizard.js",
+    "dev": "tsx watch src/index.ts",
+    "terminal": "tsx src/cli/tui.ts",
+    "tui": "tsx src/cli/tui.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "deploy": "npm install && npm run build && (npx pm2 delete athena-agent || npx pm2 delete noraz-agent || npx pm2 delete opencatz-agent || npx pm2 delete opencat-agent || true) && npx pm2 start dist/index.js --name athena-agent --update-env",
+    "update": "node scripts/update-core.mjs",
+    "uninstall": "node scripts/uninstall.mjs",
+    "clean": "node scripts/uninstall.mjs",
+    "doctor": "tsx src/cli/doctor.ts",
+    "test": "vitest run"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/athenaos-tech/athenaos-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/athenaos-tech/athenaos-agent/issues"
+  },
+  "homepage": "https://github.com/athenaos-tech/athenaos-agent",
+  "keywords": [
+    "athenaos",
+    "athena",
+    "bnb-smart-chain",
+    "bsc",
+    "pancakeswap",
+    "memecoin",
+    "crypto",
+    "ai-agent",
+    "multi-agent",
+    "swarm-consensus",
+    "discord-bot",
+    "gmgn",
+    "krystal-cloud",
+    "goplus"
+  ],
+  "author": "athenaos-tech",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "dependencies": {
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7",
+    "viem": "^2.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.4"
+  }
+}

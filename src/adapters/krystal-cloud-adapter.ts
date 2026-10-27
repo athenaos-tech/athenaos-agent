@@ -1,0 +1,221 @@
+/**
+ * Krystal Cloud adapter — official DeFi Data API (https://cloud.krystal.app).
+ * Primary use: LP pool data for Robinhood Chain (ethereum@4663), which has no
+ * other reliable pool indexer. Auth: KC-APIKey header.
+ *
+ * Units cost: /v1/pools = 2 units per request (50k free units ≈ months of use).
+ *
+ * All metrics are REAL indexed data: tvl, stats1h/24h (volume, fee, apr),
+ * incentives (farm rewards). No fabrication.
+ */
+
+import { createApiKeyPool, loadApiKeyPool, type ApiKeyPool } from '../services/api-key-pool.js';
+
+export interface KrystalPoolSignal {
+  poolAddress: string;
+  pairName: string;
+  feeTier: number; // bps (3000 = 0.3%)
+  tvlUsd: number;
+  activeTvlUsd: number;
+  volume1hUsd: number;
+  fee1hUsd: number;
+  volume24hUsd: number;
+  fee24hUsd: number;
+  feesToTvlRatio24h: number;
+  volumeToTvlRatio1h: number;
+  volumeToActiveTvlRatio1h: number;
+  feeAprPercentage: number;
+  apr24h: number;
+  farmApr24h: number;
+  token0Symbol: string;
+  token1Symbol: string;
+  token0Address: string;
+  token1Address: string;
+  aiRecommendation: string;
+}
+
+interface KrystalTokenObject {
+  token: { address: string; symbol: string; name: string; decimals: number; logo: string };
+  balance: string;
+}
+
+interface KrystalPool {
+  chain: { name: string; id: number };
+  poolAddress: string;
+  poolPrice: string;
+  protocol: { name: string; factoryAddress?: string };
+  feeTier: number;
+  tickSpacing: number;
+  currentSqrtPriceX96: string;
+  token0: KrystalTokenObject;
+  token1: KrystalTokenObject;
+  tvl: string;
+  stats1h: { volume: string; fee: string; apr: number };
+  stats24h: { volume: string; fee: string; apr: number };
+  stats7d: { volume: string; fee: string; apr: number };
+  stats30d: { volume: string; fee: string; apr: number };
+  incentives?: Array<{ incentiveType: string; apr24h: number; dailyRewardUsd?: number }>;
+}
+
+export class KrystalCloudAdapter {
+  private baseUrl = 'https://cloud-api.krystal.app';
+  private keyPool: ApiKeyPool;
+
+  constructor(apiKey?: string) {
+    this.keyPool = apiKey
+      ? createApiKeyPool('KRYSTAL_CLOUD_API_KEY', [apiKey])
+      : loadApiKeyPool('KRYSTAL_CLOUD_API_KEY');
+  }
+
+  public isConfigured(): boolean {
+    return Boolean(this.keyPool.get());
+  }
+
+  /**
+   * Request core with backup-key rotation: on HTTP 401/403 rotate to a
+   * backup key and retry once. Fail-closed: null when no key or all keys
+   * rejected; network errors / non-ok HTTP → null (never fabricated data).
+   */
+  private async request<T>(path: string): Promise<T | null> {
+    const key = this.keyPool.get() || '';
+    if (!key) return null;
+    try {
+      const doFetch = (k: string) => fetch(`${this.baseUrl}${path}`, {
+        headers: { 'KC-APIKey': k, 'Content-Type': 'application/json' },
+        signal: AbortSignal.timeout(15000),
+      });
+      let res = await doFetch(key);
+      if ((res.status === 401 || res.status === 403) && this.keyPool.size > 1) {
+        const next = this.keyPool.markFailed(`HTTP ${res.status}`);
+        if (next) {
+          res = await doFetch(next);
+          if (res.status === 401 || res.status === 403) return null;
+        }
+      }
+      if (!res.ok) {
+        console.warn(`[KRYSTAL] Request failed (fail-closed): HTTP ${res.status}`);
+        return null;
+      }
+      return (await res.json()) as T;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(`[KRYSTAL] Request failed (fail-closed): ${message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch top pools for Robinhood Chain (4663) Uniswap v3, sorted by APR.
+   * Server-side: tvl >= minTvl, volume24h >= minVol (keeps units cost low).
+   */
+  public async fetchTopBscPools(minTvlUsd = 20000, minVol24hUsd = 200000, limit = 200): Promise<KrystalPoolSignal[]> {
+    return this.fetchPools('56', 'pancakev3', 'PancakeSwap V3', 'BNB Chain', minTvlUsd, minVol24hUsd, limit);
+  }
+
+  /** Robinhood Uniswap v3 pools. Kept for a manual chain override. */
+  public async fetchTopRobinhoodPools(minTvlUsd = 20000, minVol24hUsd = 200000, limit = 200): Promise<KrystalPoolSignal[]> {
+    return this.fetchPools('4663', 'uniswapv3', 'Uniswap V3', 'Robinhood Chain', minTvlUsd, minVol24hUsd, limit);
+  }
+
+  private async fetchPools(
+    chainId: string,
+    protocol: string,
+    dexName: string,
+    chainName: string,
+    minTvlUsd: number,
+    minVol24hUsd: number,
+    limit: number,
+  ): Promise<KrystalPoolSignal[]> {
+    const qs = new URLSearchParams({
+      chainId,
+      protocol,
+      sortBy: '0', // SORT_BY_APR
+      tvlFrom: String(minTvlUsd),
+      volume24hFrom: String(minVol24hUsd),
+      withIncentives: 'true',
+      limit: String(limit),
+    });
+    const data = await this.request<KrystalPool[]>(`/v1/pools?${qs.toString()}`);
+    if (!Array.isArray(data)) return [];
+
+    const pools: KrystalPoolSignal[] = [];
+    for (const p of data) {
+      const tvlUsd = Number(p.tvl) || 0;
+      const volume1hUsd = Number(p.stats1h?.volume) || 0;
+      const fee1hUsd = Number(p.stats1h?.fee) || 0;
+      const volume24hUsd = Number(p.stats24h?.volume) || 0;
+      const fee24hUsd = Number(p.stats24h?.fee) || 0;
+      const apr24h = Number(p.stats24h?.apr) || 0;
+      const t0 = p.token0?.token;
+      const t1 = p.token1?.token;
+      if (!p.poolAddress || !t0 || !t1) continue;
+
+      // Active-TVL proxy (same as the Robinhood LP signal): TVL effectively
+      // generating fees = fee_rate × tvl, fee_rate real from 1h data.
+      const feeRate = volume1hUsd > 0 ? fee1hUsd / volume1hUsd : 0;
+      const activeTvlUsd = feeRate > 0 ? feeRate * tvlUsd : tvlUsd * 0.3;
+      const feesToTvlRatio24h = tvlUsd > 0 ? fee24hUsd / tvlUsd : 0;
+      const volumeToTvlRatio1h = tvlUsd > 0 ? volume1hUsd / tvlUsd : 0;
+      const volumeToActiveTvlRatio1h = activeTvlUsd > 0 ? volume1hUsd / activeTvlUsd : 0;
+
+      // Farm rewards (incentives) APR 24h — additional yield
+      const farmApr24h = (p.incentives || []).reduce((s, i) => s + (Number(i.apr24h) || 0), 0);
+
+      pools.push({
+        poolAddress: p.poolAddress,
+        pairName: `${t0.symbol}-${t1.symbol}`,
+        feeTier: p.feeTier || 0,
+        tvlUsd,
+        activeTvlUsd,
+        volume1hUsd,
+        fee1hUsd,
+        volume24hUsd,
+        fee24hUsd,
+        feesToTvlRatio24h,
+        volumeToTvlRatio1h,
+        volumeToActiveTvlRatio1h,
+        feeAprPercentage: Number((feesToTvlRatio24h * 365 * 100).toFixed(1)) || 0,
+        apr24h,
+        farmApr24h,
+        token0Symbol: t0.symbol,
+        token1Symbol: t1.symbol,
+        token0Address: t0.address,
+        token1Address: t1.address,
+        aiRecommendation: `Live ${dexName} pool ${t0.symbol}-${t1.symbol} (${chainName}): $${(tvlUsd / 1000).toFixed(1)}k TVL, $${(volume24hUsd / 1000).toFixed(1)}k 24h volume, $${(fee24hUsd / 1000).toFixed(1)}k 24h fees (${(feesToTvlRatio24h * 100).toFixed(2)}%/24h).`,
+      });
+    }
+    return pools;
+  }
+
+  /**
+   * High-yield filter — Robinhood LP velocity with REAL data:
+   * - fee1h >= $50 (real — calibrated 2026-08-09: $7 was too low)
+   * - 24h Fee/TVL > minFeeTvlRatio24h (default 4%, real)
+   * - volume/activeTvl >= 100% per 1h (velocity, real fee_rate)
+   * - tvl >= minTvlUsd (default $20k, already filtered server-side, still checked here)
+   * - dedupe per pair (1 best pool per token pair)
+   * Pool age & token verified are unavailable on Krystal — skipped.
+   * Thresholds can be injected from an active strategy (hub runLPPass).
+   */
+  public filterHighYieldPools(
+    pools: KrystalPoolSignal[],
+    opts: { minTvlUsd?: number; minFeeTvlRatio24h?: number } = {}
+  ): KrystalPoolSignal[] {
+    const minTvlUsd = opts.minTvlUsd ?? 20000;
+    const minFeeTvlRatio24h = opts.minFeeTvlRatio24h ?? 0.04;
+    const bestByPair = new Map<string, KrystalPoolSignal>();
+    for (const pool of pools) {
+      if (pool.tvlUsd < minTvlUsd) continue;
+      if (pool.fee1hUsd < 50) continue;
+      if (pool.feesToTvlRatio24h <= minFeeTvlRatio24h) continue;
+      if (pool.volumeToActiveTvlRatio1h < 1.0) continue;
+
+      const pairKey = `${pool.token0Symbol}-${pool.token1Symbol}`.toUpperCase();
+      const existing = bestByPair.get(pairKey);
+      if (!existing || pool.feesToTvlRatio24h > existing.feesToTvlRatio24h) {
+        bestByPair.set(pairKey, pool);
+      }
+    }
+    return [...bestByPair.values()];
+  }
+}

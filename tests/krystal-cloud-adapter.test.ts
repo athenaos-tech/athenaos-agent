@@ -1,0 +1,169 @@
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { KrystalCloudAdapter, type KrystalPoolSignal } from '../src/adapters/krystal-cloud-adapter.js';
+
+const mkPool = (over: Record<string, unknown> = {}) => ({
+  chain: { name: 'Robinhood', id: 4663 },
+  poolAddress: '0xpool1',
+  poolPrice: '1',
+  protocol: { name: 'Uniswap V3', factoryAddress: '0x1f7d7550b1b028f7571e69a784071f0205fd2efa' },
+  feeTier: 3000,
+  tickSpacing: 60,
+  currentSqrtPriceX96: '1',
+  token0: { token: { address: '0xweth', symbol: 'WETH', name: 'Wrapped ETH', decimals: 18, logo: '' }, balance: '1' },
+  token1: { token: { address: '0xusdc', symbol: 'USDC', name: 'USD Coin', decimals: 6, logo: '' }, balance: '1' },
+  tvl: '150000',
+  stats1h: { volume: '5000', fee: '20', apr: 28.4 },
+  stats24h: { volume: '120000', fee: '360', apr: 26.3 },
+  stats7d: { volume: '800000', fee: '2400', apr: 30 },
+  stats30d: { volume: '3000000', fee: '9000', apr: 25 },
+  incentives: [],
+  ...over,
+});
+
+const stubFetch = (data: unknown) =>
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+    ok: true,
+    json: async () => data,
+  }));
+
+describe('KrystalCloudAdapter', () => {
+  afterEach(() => { vi.unstubAllGlobals(); delete process.env.KRYSTAL_CLOUD_API_KEY; delete process.env.KRYSTAL_CLOUD_BACKUP_KEYS; });
+
+  it('isConfigured false without key (fail-closed)', () => {
+    expect(new KrystalCloudAdapter().isConfigured()).toBe(false);
+    process.env.KRYSTAL_CLOUD_API_KEY = 'test';
+    expect(new KrystalCloudAdapter().isConfigured()).toBe(true);
+  });
+
+  it('maps real Krystal pools (robinhood 4663)', async () => {
+    process.env.KRYSTAL_CLOUD_API_KEY = 'test';
+    stubFetch([mkPool()]);
+    const adapter = new KrystalCloudAdapter();
+    const pools = await adapter.fetchTopRobinhoodPools();
+    expect(pools.length).toBe(1);
+    const p = pools[0];
+    expect(p.poolAddress).toBe('0xpool1');
+    expect(p.pairName).toBe('WETH-USDC');
+    expect(p.tvlUsd).toBe(150000);
+    expect(p.fee1hUsd).toBe(20);
+    expect(p.volume24hUsd).toBe(120000);
+    expect(p.feesToTvlRatio24h).toBeCloseTo(0.0024, 5);
+    expect(p.token0Address).toBe('0xweth');
+    expect(p.token1Address).toBe('0xusdc');
+    // activeTvl proxy = fee_rate × tvl = (20/5000) × 150000 = 600
+    expect(p.activeTvlUsd).toBeCloseTo(600, 5);
+    expect(p.volumeToActiveTvlRatio1h).toBeCloseTo(8.33, 2);
+  });
+
+  it('sends robinhood chainId + server-side filters', async () => {
+    process.env.KRYSTAL_CLOUD_API_KEY = 'test';
+    stubFetch([]);
+    const adapter = new KrystalCloudAdapter();
+    await adapter.fetchTopRobinhoodPools(20000, 15000, 100);
+    const url = (vi.mocked(fetch).mock.calls[0][0] as string);
+    expect(url).toContain('chainId=4663');
+    expect(url).toContain('protocol=uniswapv3');
+    expect(url).toContain('sortBy=0');
+    expect(url).toContain('tvlFrom=20000');
+    expect(url).toContain('volume24hFrom=15000');
+    expect(url).toContain('withIncentives=true');
+  });
+
+  it('returns [] when API fails (fail-closed)', async () => {
+    process.env.KRYSTAL_CLOUD_API_KEY = 'test';
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('down')));
+    const adapter = new KrystalCloudAdapter();
+    expect(await adapter.fetchTopRobinhoodPools()).toEqual([]);
+  });
+
+  it('filterHighYieldPools — mirror LP robinhood gates + dedupe per pair', () => {
+    process.env.KRYSTAL_CLOUD_API_KEY = 'test';
+    const adapter = new KrystalCloudAdapter();
+    const good = adapter.fetchTopRobinhoodPools && undefined; // helper below
+    void good;
+    // Pool passes all gates: tvl 150k, fee1h 20, feeTvl24 0.0024 > 0.01? no — 0.24% < 1%
+    // use high fee pool
+    const highFee = mkPool({
+      poolAddress: '0xa', tvl: '150000',
+      stats1h: { volume: '50000', fee: '150', apr: 100 },
+      stats24h: { volume: '500000', fee: '5000', apr: 90 }, // feeTvl24 = 5% > 4% ✓
+    });
+    const lowFee = mkPool({
+      poolAddress: '0xb', tvl: '150000',
+      stats1h: { volume: '50000', fee: '150', apr: 100 },
+      stats24h: { volume: '500000', fee: '500', apr: 90 }, // feeTvl24 = 0.33% < 4% ✗
+    });
+    const dupPair = mkPool({
+      poolAddress: '0xc', tvl: '300000',
+      stats1h: { volume: '50000', fee: '150', apr: 100 },
+      stats24h: { volume: '800000', fee: '8000', apr: 95 }, // feeTvl24 = 4.5% > 4% ✓, same pair WETH-USDC
+    });
+    // 1. parse to signal via fetch (using adapter parse method on fetch)
+    // simulate with fetch stub then filter
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: async () => [highFee, lowFee, dupPair] }));
+    // filter operates on KrystalPoolSignal — construct via fetchTopRobinhoodPools
+    const filtered = adapter.filterHighYieldPools([
+      {
+        poolAddress: '0xa', pairName: 'WETH-USDC', feeTier: 3000,
+        tvlUsd: 150000, activeTvlUsd: 450, volume1hUsd: 50000, fee1hUsd: 150,
+        volume24hUsd: 500000, fee24hUsd: 5000, feesToTvlRatio24h: 0.05,
+        volumeToTvlRatio1h: 0.33, volumeToActiveTvlRatio1h: 111, feeAprPercentage: 100,
+        apr24h: 90, farmApr24h: 0, token0Symbol: 'WETH', token1Symbol: 'USDC',
+        token0Address: '0xweth', aiRecommendation: 'x',
+      },
+      {
+        poolAddress: '0xb', pairName: 'WETH-USDC', feeTier: 3000,
+        tvlUsd: 150000, activeTvlUsd: 450, volume1hUsd: 50000, fee1hUsd: 150,
+        volume24hUsd: 500000, fee24hUsd: 500, feesToTvlRatio24h: 0.0033,
+        volumeToTvlRatio1h: 0.33, volumeToActiveTvlRatio1h: 111, feeAprPercentage: 100,
+        apr24h: 90, farmApr24h: 0, token0Symbol: 'WETH', token1Symbol: 'USDC',
+        token0Address: '0xweth', aiRecommendation: 'x',
+      },
+      {
+        poolAddress: '0xc', pairName: 'WETH-USDC', feeTier: 3000,
+        tvlUsd: 300000, activeTvlUsd: 900, volume1hUsd: 50000, fee1hUsd: 150,
+        volume24hUsd: 800000, fee24hUsd: 8000, feesToTvlRatio24h: 0.045,
+        volumeToTvlRatio1h: 0.17, volumeToActiveTvlRatio1h: 55, feeAprPercentage: 100,
+        apr24h: 95, farmApr24h: 0, token0Symbol: 'WETH', token1Symbol: 'USDC',
+        token0Address: '0xweth', aiRecommendation: 'x',
+      },
+    ]);
+    // lowFee (0xb) rejected (feeTvl 0.33% < 4%); 0xa (5%) vs 0xc (4.5%) dedupe → 0xa wins (highest feeTvl)
+    expect(filtered.length).toBe(1);
+    expect(filtered[0].poolAddress).toBe('0xa');
+  });
+
+  it('filterHighYieldPools honors injected looser thresholds', () => {
+    process.env.KRYSTAL_CLOUD_API_KEY = 'test';
+    const adapter = new KrystalCloudAdapter();
+    // Distinct token pairs: per-pair dedupe must not collapse the loose assertion.
+    const pools = [
+      { poolAddress: '0x1', token0Symbol: 'WETH', token1Symbol: 'PEPE', tvlUsd: 15000, feesToTvlRatio24h: 0.03 } as unknown as KrystalPoolSignal,
+      { poolAddress: '0x2', token0Symbol: 'WETH', token1Symbol: 'FLOKI', tvlUsd: 50000, feesToTvlRatio24h: 0.05 } as unknown as KrystalPoolSignal,
+    ];
+    const strict = adapter.filterHighYieldPools(pools);
+    expect(strict.length).toBe(1);
+    expect(strict[0].poolAddress).toBe('0x2');
+    const loose = adapter.filterHighYieldPools(pools, { minTvlUsd: 10000, minFeeTvlRatio24h: 0.02 });
+    expect(loose.length).toBe(2);
+  });
+
+  it('rotates to the backup key on 401 and succeeds', async () => {
+    process.env.KRYSTAL_CLOUD_API_KEY = 'kk1';
+    process.env.KRYSTAL_CLOUD_BACKUP_KEYS = 'kk2';
+    const adapter = new KrystalCloudAdapter();
+    let calls = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      calls++;
+      if (calls === 1) return new Response('{}', { status: 401 });
+      return new Response(JSON.stringify({ pools: [] }), { status: 200 });
+    }));
+    await adapter.fetchTopRobinhoodPools();
+    expect(calls).toBe(2);
+    const secondInit = vi.mocked(fetch).mock.calls[1][1] as RequestInit;
+    const secondHeaders = (secondInit?.headers ?? {}) as Record<string, string>;
+    expect(secondHeaders['KC-APIKey']).toBe('kk2');
+    vi.unstubAllGlobals();
+    delete process.env.KRYSTAL_CLOUD_BACKUP_KEYS;
+  });
+});
