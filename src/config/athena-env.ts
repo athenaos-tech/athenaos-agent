@@ -8,7 +8,7 @@ export function envFirst(...keys: string[]): string | undefined {
   return undefined;
 }
 
-export const DEFAULT_PLATFORM_URL = 'https://athenaos.tech';
+export const DEFAULT_PLATFORM_URL = 'https://api.athenaos.tech';
 
 export function getAthenaApiKey(): string | undefined {
   return envFirst('ATHENA_API_KEY', 'ATHENA_API_KEY', 'OPENCATZ_API_KEY', 'OPENCAT_API_KEY');
