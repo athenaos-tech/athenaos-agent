@@ -36,7 +36,7 @@ Screening and signal generation stay separate from execution: call cards land in
 | 🐦 **X (Twitter)** | [@athenaostech](https://x.com/athenaostech) |
 | 📦 **Agent (this repo)** | [github.com/athenaos-tech/athenaos-agent](https://github.com/athenaos-tech/athenaos-agent.git) |
 | 🖥️ **Web desk (frontend)** | [`binance-app/`](../binance-app) — marketing, docs, operator profile, leaderboard |
-| 🔑 **Platform API** | Desk keys & public book — configure `ATHENA_PLATFORM_URL` (default `https://api.api.noraz.space`) |
+| 🔑 **Platform API** | Desk keys & public book — configure `ATHENA_PLATFORM_URL` (hosted site proxies `/platform` on [athenaos.tech](https://athenaos.tech)) |
 
 Every operator runs their own agent. The public face is shared; the copy on your book is yours.
 
